@@ -29,7 +29,6 @@ def process_reviews(file_name: str, folder_name: str, target_review_count: int, 
     merge_pos_neg(folder_path)
     
     output_file = f"BRZ_review_{folder_name}_review{target_review_count}_final.csv"
-    output_file = f"total_{folder_name}_review{target_review_count}.csv"
     concat_merged_reviews(folder_path, output_file)
 
 
