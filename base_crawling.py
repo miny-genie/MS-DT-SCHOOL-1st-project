@@ -65,12 +65,13 @@ def fetch_reviews_to_csv(appid: int, game_name: str, path: str, review_type: str
         params = {
             "json": 1,
             "language": language,
-            "num_per_page": num_per_page,
-            "cursor": cursor,
-            "filter": "recent",         # all, recent, updated
-            "review_type": review_type, # positive, negative
             "purchase_type": "all",     # all, steam, non_steam_purchase
+            "filter": "recent",         # all, recent, updated
+            "num_per_page": num_per_page,
+            "review_type": review_type, # positive, negative
+            "cursor": cursor,
         }
+        # 로그를 위한 실제 url 조합
         real_url = f"https://store.steampowered.com/appreviews/{appid}?{'&'.join([k + '=' + str(v) for k, v in params.items()])}"
         
         # 비공식 API에서 리뷰를 가져오기(최대 10분 대기)
