@@ -1,68 +1,66 @@
 import os
 import pandas as pd
 from base_crawling import run_parallel_review_fetch as run
-from constants import CSV_FOLDER_PATH
+from constants import CSV_FOLDER_PATH, ENCODING_TYPE
+from functions import merge_pos_neg, concat_merged_reviews, round_up_to_100
 
 
-def get_appids_and_gamenames(file_name: str) -> list[int]:
-    # std_df = pd.read_csv(os.path.join(CSV_FOLDER_PATH , file_name))
-    # appid_df = pd.read_csv(os.path.join(CSV_FOLDER_PATH , "appid.csv"))
+def get_appids_and_gamenames(file_name: str, target_review_count: int) -> tuple[list[int], list[int]]:
+    if "all" in file_name:
+        df_all = pd.read_csv(os.path.join(CSV_FOLDER_PATH, file_name), encoding=ENCODING_TYPE)
+        return df_all['appid'].tolist(), df_all['name'].tolist()
+    else:
+        df_rev = pd.read_csv(os.path.join(CSV_FOLDER_PATH, "appid_game-name_eng-rev-cnt.csv"), encoding=ENCODING_TYPE)
+        df_rev = df_rev.drop_duplicates(subset=['app_id'])[['app_id', 'english_review_count']]
+        
+        df_top = pd.read_csv(os.path.join(CSV_FOLDER_PATH, file_name), encoding=ENCODING_TYPE)[['app_id', '게임이름']]
+        df = df_top.merge(df_rev, how='left', on='app_id')
+        df = df[df['english_review_count'] >= target_review_count]
+        return df['app_id'].tolist(), df['게임이름'].tolist()
+
+
+def calculate_ratio(appids: list[int], file_name: str, target_review_count: int) -> tuple[list[int], list[int]]:
+    if "all" in file_name:
+        df_all = pd.read_csv(os.path.join(CSV_FOLDER_PATH, file_name), encoding=ENCODING_TYPE)
+        df_all['pos_count'] = df_all['eng_review_positive'] * target_review_count // 100
+        df_all['neg_count'] = target_review_count - df_all['pos_count']
+        return df_all['pos_count'].tolist(), df_all['neg_count'].tolist()
+    else:
+        df = pd.read_csv(os.path.join(CSV_FOLDER_PATH, file_name), encoding=ENCODING_TYPE)
+        df = df[df['app_id'].isin(appids)]
+        df['pos_count'] = df['긍정적인 평가 비율'] * target_review_count // 100
+        df['neg_count'] = target_review_count - df['pos_count']
+        return df['pos_count'].tolist(), df['neg_count'].tolist()
+
+
+def process_reviews(file_name: str, folder_name: str, target_game_count: int, target_review_count: int, max_workers: int) -> None:
+    appids, gamenames = get_appids_and_gamenames(file_name, target_review_count)
+    pos_counts, neg_counts = calculate_ratio(appids, file_name, target_review_count)
     
-    # df = pd.merge(
-    #     std_df,
-    #     appid_df[['appid', '게임명']],
-    #     how="left",
-    #     left_on='게임이름', 
-    #     right_on='게임명'
-    # )
-    df = pd.read_csv(os.path.join(CSV_FOLDER_PATH, file_name))
-    return df['app_id'].tolist(), df['게임이름'].tolist()
-
-
-def calculate_ratio(file_name: str, target_review_count: int) -> tuple[int]:
-    std_df = pd.read_csv(os.path.join(CSV_FOLDER_PATH, file_name))
-    std_df['pos_count'] = std_df['긍정적인 평가 비율'] * target_review_count // 100
-    std_df['neg_count'] = (100 - std_df['긍정적인 평가 비율']) * target_review_count // 100
-    return std_df['pos_count'].tolist(), std_df['neg_count'].tolist()
-
-
-def main():
-    target_review_count = 500
-    target_game_count = 200
-    max_workers = 5
-
-    # TOP RATED: set argument
-    rate_file_name = "toprated2000_plus_col.csv"
-    rate_appids, rate_gamenames = get_appids_and_gamenames(rate_file_name)
-    rate_folder = "file/top_rated_200"
-    pos_counts, neg_counts = calculate_ratio(rate_file_name, target_review_count)  # 비율에 따른 리뷰 수집을 위한 계산
-
-    rate_appids = rate_appids[:target_game_count]
-    rate_gamenames = rate_gamenames[:target_game_count]
-    pos_counts = pos_counts[:target_game_count]
-    neg_counts = neg_counts[:target_game_count]
-
-    # TOP RATED: start crawling
-    print(f"[RUN] Top rated {len(rate_appids)} steam game review crawling")
-    run(appids=rate_appids, game_names=rate_gamenames, path=rate_folder, review_type="positive", ratio_counts=pos_counts, num_per_pages=100, max_pages=5, max_workers=max_workers)
-    run(appids=rate_appids, game_names=rate_gamenames, path=rate_folder, review_type="negative", ratio_counts=neg_counts, num_per_pages=100, max_pages=5, max_workers=max_workers)
+    appids, gamenames = appids[:target_game_count], gamenames[:target_game_count]
+    pos_counts, neg_counts = pos_counts[:target_game_count], neg_counts[:target_game_count]
+    pos_pages, neg_pages = map(round_up_to_100, pos_counts), map(round_up_to_100, neg_counts)
+    folder_path = os.path.join("file", folder_name)
     
-    # TOP SELLER: set argument
-    seller_file_name = "topsell1100_plus_col.csv"
-    seller_appids, seller_gamenames = get_appids_and_gamenames(seller_file_name)
-    seller_folder = "file/top_sellers_200"
-    pos_counts, neg_counts = calculate_ratio(rate_file_name, target_review_count)  # 비율에 따른 리뷰 수집을 위한 계산
+    print(f"[RUN] {folder_name} 리뷰 수집 시작({len(appids)}개 게임)")
+    run(appids, gamenames, folder_path, "positive", pos_counts, num_per_pages=100, max_pages=pos_pages, max_workers=max_workers)
+    run(appids, gamenames, folder_path, "negative", neg_counts, num_per_pages=100, max_pages=neg_pages, max_workers=max_workers)
+    merge_pos_neg(folder_path)
+    
+    output_file = f"total_{folder_name}_review{target_review_count}.csv"
+    concat_merged_reviews(folder_path, output_file)
 
-    seller_appids = seller_appids[:target_game_count]
-    seller_gamenames = seller_gamenames[:target_game_count]
-    pos_counts = pos_counts[:target_game_count]
-    neg_counts = neg_counts[:target_game_count]
 
-    # TOP SELLER: start crawling
-    print(f"[RUN] Top rated {len(seller_appids)} steam game review crawling")
-    run(appids=seller_appids, game_names=seller_gamenames, path=seller_folder, review_type="positive", ratio_counts=pos_counts, num_per_pages=100, max_pages=5, max_workers=max_workers)
-    run(appids=seller_appids, game_names=seller_gamenames, path=seller_folder, review_type="negative", ratio_counts=neg_counts, num_per_pages=100, max_pages=5, max_workers=max_workers)
+def main(target_review_count: int, target_game_count: int, max_workers: int) -> None:    
+    process_reviews("toprated2000_plus_col.csv", "rated_top200", target_game_count, target_review_count, max_workers)
+    process_reviews("topsell1100_plus_col.csv", "sellers_top200", target_game_count, target_review_count, max_workers)
+    
+    process_reviews("allgame_filt_10000.csv", "all_game", -1, target_review_count, max_workers)
 
 
 if __name__ == "__main__":
-    main()
+    target_review_count = 200
+    target_game_count = 200
+    parallel_cpu_workers = 5
+    
+    main(target_review_count, target_game_count, parallel_cpu_workers)
